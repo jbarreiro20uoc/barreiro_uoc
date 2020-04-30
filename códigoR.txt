@@ -1,0 +1,182 @@
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## importar datos
+```{r}
+library(GEOquery)
+gse <- getGEO("GSE80158", GSEMatrix = TRUE)
+show(gse)
+filePaths = getGEOSuppFiles("GSE80158")
+filePaths
+library(affy)
+```
+```{r}
+require(Biobase)
+require(affy)
+rawData <- ReadAffy()
+summary(rawData)
+```
+
+
+```{r}
+library(ggplot2)
+boxplot(rawData,las=2)
+hist(rawData)
+MAplot(rawData,which=i)
+
+```
+
+## 
+```{r}
+library(arrayQualityMetrics)
+arrayQualityMetrics(rawData)
+require(fastcluster)
+require(graphics)
+
+
+```
+
+## control de calidad
+
+```{r}
+stopifnot(require(affyPLM))
+Pset<- fitPLM(rawData)
+RLE(Pset)
+NUSE(Pset)
+```
+
+
+## normalización
+```{r}
+stopifnot(require(affy))
+normalize <- T
+eset_rma <- rma(rawData)
+boxplot(eset_rma,main="Boxplot para valores normalizados ",col=3,
+las=2)
+```
+
+## filtraje
+
+```{r}
+library(genefilter)
+filtered <- nsFilter(eset_rma)
+```
+
+
+## matriz de diseño
+```{r}
+sml <- paste("G", sml, sep="")    # set group names
+fl <- as.factor(sml)
+gset$description <- fl
+design <- model.matrix(~ description + 0, gset)
+colnames(design) <- levels(fl)
+fit <- lmFit(gset, design)
+cont.matrix <- makeContrasts(G1-G0, levels=design)
+fit2 <- contrasts.fit(fit, cont.matrix)
+fit2 <- eBayes(fit2, 0.01)
+tT <- topTable(fit2, adjust="fdr", sort.by="B", number=250)
+
+tT <- subset(tT, select=c("ID","adj.P.Val","P.Value","t","B","logFC","ORF"))
+write.table(tT, file=stdout(), row.names=F, sep="\t")
+
+```{r}
+cont.matrix <- makeContrasts (
+  levels=design)
+ cont.matrix
+
+
+## anotacion de genes
+
+```{r}
+if (!(require(ath1121501.db))){
+biocLite("ath1121501.db.db")
+ }
+ require(ath1121501.db)
+ anotData <- capture.output(ath1121501())
+ print(anotData[1:15])
+```
+
+```{r}
+cat ("... output continues until ", length(anotData), " lines.\n")
+```
+
+```{r}
+genesTable<- toTable(ath1121501SYMBOL)
+rownames((genesTable)) <- genesTable$probe_id
+genesTable[5, 2]
+```
+
+
+```{r}
+require(annotate)
+
+geneSymbol1 <- getSYMBOL(tT, "ath1121501.db")
+GOAnots1 <- mget(tT, ath1121501GO)
+for (i in 1:length(GOAnots1)){
+ for (j in 1:length(GOAnots1[[i]])){
+ GOAnot <- GOAnots1[[i]][[j]][[1]]
+ cat(top1[i],geneSymbol1[i],GOAnot,substr(Term(GOAnot),1,30), "\n")
+ }
+ }
+```
+
+
+```{r}
+require(ath1121501.db)
+anotData <- capture.output(ath1121501.db)
+print(anotData[1:15])
+```
+
+
+```{r}
+require(annotate)
+top1 <-genesTable$probe_id[1:1]
+geneSymbol1 <- getSYMBOL(top1, "ath1121501.db")
+GOAnots1 <- mget(top1, ath1121501GO)
+for (i in 1:length(GOAnots1)){
+for (j in 1:length(GOAnots1[[i]])){
+  GOAnot <- GOAnots1[[i]][[j]][[1]]
+ cat(top1[i],geneSymbol1[i],GOAnot,substr(Term(GOAnot),1,30), "\n")}}
+```
+
+
+```{r}
+require(GOstats)
+require(ath1121501.db)
+
+ # Seleccionamos la "topTable"
+topTab <- tT
+ # Definimos el universo de genes: todos los que se han incluido en el análisis
+ # EL programa trabaja con identificadores "entrez" y no admite duplicados
+
+ entrezUniverse = unique(getEG(as.character(genesTable$probe_id), "ath1121501.db"))
+ # Escogemos los grupos de sondas a incluir en el análisis
+ # Este análisis trabaja bien con varios centenares de genes
+ # por lo que es habitual basarse en p-valores sin ajustar para incluirlos
+
+ whichGenes<-tT["adj.P.Val"]<0.001
+geneIds <- unique(getEG(as.character(topTab$[whichGenes]),"ath1121501.db"))
+ # Creamos los "hiperparámetros" en que se basa el análisis
+ GOparams = new("GOHyperGParams",
++ geneIds=geneIds, universeGeneIds=entrezUniverse,
++ annotation="ath1121501.db", ontology="BP",
++ pvalueCutoff=0.001, conditional=FALSE,
++ testDirection="over")
+ KEGGparams = new("KEGGHyperGParams",
++ geneIds=geneIds, universeGeneIds=entrezUniverse,
++ annotation="ath1121501.db",
++ pvalueCutoff=0.01, testDirection="over")
+ # Ejecutamos los análisis
+
+ GOhyper = hyperGTest(GOparams)
+ KEGGhyper = hyperGTest(KEGGparams)
+ # Creamos un informe html con los resultados
+ comparison = "topTab"
+ GOfilename =file.path(resultsDir,
++ paste("GOResults.",comparison,".html", sep=""))
+ KEGGfilename =file.path(resultsDir,
++ paste("KEGGResults.",comparison,".html", sep=""))
+ htmlReport(GOhyper, file = GOfilename, summary.args=list("htmlLinks"=TRUE))
+ htmlReport(KEGGhyper, file = KEGGfilename, summary.args=list("htmlLinks"=TRUE))
+```

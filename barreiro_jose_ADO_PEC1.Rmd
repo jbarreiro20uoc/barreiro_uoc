@@ -1,0 +1,303 @@
+---
+title: "barreiro_jose_ADO_PEC1"
+author: "Jose Fco. Barreiro Gonzalez"
+date: "29/4/2020"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Obtención de datos
+
+```{r}
+library(Biobase)
+library(GEOquery)
+library(limma)
+```
+
+```{r}
+gset <- getGEO("GSE80158", GSEMatrix =TRUE, AnnotGPL=FALSE)
+if (length(gset) > 1) idx <- grep("GPL21063", attr(gset, "names")) else idx <- 1
+gset <- gset[[idx]]
+```  
+s
+
+
+```{r}
+if (!requireNamespace("BiocManager", quietly = TRUE))
+install.packages("BiocManager")
+BiocManager::install()
+```
+
+
+```{r}
+library(affy)
+rawData <- ReadAffy()
+summary(rawData)
+```
+
+# Preprocesado
+## El primer paso consiste en una exploración de los datos crudos, 
+```{r}
+library(ggplot2)
+boxplot(rawData,las=2)
+hist(rawData)
+arrayQualityMetrics(expressionset = rawData,
+outdir = "~/uoc/datos omicos/pec/PEC1_omicas/PEC1/results",
+force = TRUE,
+do.logtransform = TRUE)
+```
+
+## Control de calidad de los datos
+```{r}
+library(affyPLM)
+Pset <- fitPLM(rawData)
+boxplot(Pset,las=2)
+RLE(Pset,las=2)
+NUSE(Pset,las=2)
+```
+
+## Normalización de los datos
+
+```{r}
+stopifnot(require(affy))
+normalize <- T
+if(normalize){
+eset_rma <- rma(rawData)}
+boxplot(eset_rma,main="Boxplot for RMA-normalized expression values ",las=2,col=3)
+```
+## control de calidad datos normalizados
+
+
+```{r}
+library(affyPLM)
+library(arrayQualityMetrics)
+library(affydata)
+arrayQualityMetrics(eset_rma, outdir = file.path("./results", "QCDir.Norm"), force=TRUE)
+
+```
+
+
+
+## Filtraje no específico
+
+
+```{r}
+library(genefilter)
+filtered <- nsFilter(eset_rma)
+         
+         
+print(filtered$filter.log)  
+eset_filtered <-filtered$eset
+```
+
+## Matriz de contrastes
+
+```{r}
+library(limma)
+fvarLabels(eset_filtered) <- make.names(fvarLabels(eset_filtered))
+gsms <- "001111"
+sml <- c()
+for (i in 1:nchar(gsms)) { sml[i] <- substr(gsms,i,i) }
+ex <- exprs(eset_filtered)
+qx <- as.numeric(quantile(ex, c(0., 0.25, 0.5, 0.75, 0.99, 1.0), na.rm=T))
+LogC <- (qx[5] > 100) ||
+          (qx[6]-qx[1] > 50 && qx[2] > 0) ||
+          (qx[2] > 0 && qx[2] < 1 && qx[4] > 1 && qx[4] < 2)
+if (LogC) { ex[which(ex <= 0)] <- NaN
+  exprs(eset_filtered) <- log2(ex) }
+sml <- paste("G", sml, sep="")    # set group names
+fl <- as.factor(sml)
+eset_filtered$description <- fl
+design <- model.matrix(~ description + 0, eset_filtered)
+colnames(design) <- levels(fl)
+fit <- lmFit(eset_filtered, design)
+cont.matrix <- makeContrasts(G1-G0, levels=design)
+fit2 <- contrasts.fit(fit, cont.matrix)
+fit2 <- eBayes(fit2, 0.01)
+tT <- topTable(fit2, adjust="fdr", sort.by="B", number=250)
+tT <- subset(tT, select=c("logFC","AveExpr","t","P.Value" ,"adj.P.Val","B"))
+write.table(tT, file=stdout(), row.names=F, sep="\t")
+
+```
+
+## grafico
+```{r}
+volcanoplot(fit2,main="volocano plot")
+abline(v=c(-2,2))
+
+```
+
+
+## Heatmap
+```{r}
+color.map <- function(horas) { if (horas< 20) "yellow" else "red" }
+grupColors <- unlist(lapply(pData(eset_filtered)$time.h, color.map))
+require("gplots")
+heatmap.2(exprs2cluster,
+col=bluered(75), scale="row",
+ key=TRUE, symkey=FALSE,
+density.info="none", trace="none", cexCol=1)
+```
+
+
+
+```{r}
+topTablow <- topTable (fit2, number=nrow(fit2), coef="low", adjust="fdr")
+```
+
+
+
+```{r}
+res <- decideTests(fit2,method = "separate",p.value = "0.05")
+head(res)
+sum.res.rows<-apply(abs(res),1,sum)
+res.selected<-res[sum.res.rows!=0,]
+print(summary(res))
+vennDiagram (res.selected)
+```
+
+## anotacion de genes
+
+```{r}
+if (!(require(ath1121501.db))){
+biocLite("ath1121501.db.db")
+ }
+ require(ath1121501.db)
+ anotData <- capture.output(ath1121501())
+ print(anotData[1:15])
+```
+
+```{r}
+cat ("... output continues until ", length(anotData), " lines.\n")
+```
+
+```{r}
+genesTable<- toTable(ath1121501SYMBOL)
+rownames((genesTable)) <- genesTable$probe_id
+genesTable[5, 2]
+```
+## Genes diferencialmente expresados
+
+```{r}
+require(annotate)
+
+geneSymbol1 <- getSYMBOL(tT, "ath1121501.db")
+GOAnots1 <- mget(tT, ath1121501GO)
+for (i in 1:length(GOAnots1)){
+ for (j in 1:length(GOAnots1[[i]])){
+ GOAnot <- GOAnots1[[i]][[j]][[1]]
+ cat(top1[i],geneSymbol1[i],GOAnot,substr(Term(GOAnot),1,30), "\n")
+ }
+ }
+```
+
+
+```{r}
+require(Biobase)
+require(limma)
+
+my.eset <- eset_rma
+targets <- pData(my.eset)
+targets_comp<- paste(targets$sample,targets$description, sep=".")
+lev<-factor(targets_comp, levels=unique(targets_comp))
+design <-model.matrix(~0+lev)
+colnames(design)<-levels(lev)
+rownames(design) <-rownames(targets)
+print(design)
+```
+
+```{r}
+cont.matrix <- makeContrasts (
+  
+ levels=design)
+ cont.matrix
+```
+
+
+```{r}
+require(ath1121501.db)
+anotData <- capture.output(ath1121501.db)
+print(anotData[1:15])
+```
+
+
+```{r}
+require(annotate)
+top1 <-genesTable$probe_id[1:1]
+geneSymbol1 <- getSYMBOL(top1, "ath1121501.db")
+GOAnots1 <- mget(top1, ath1121501GO)
+for (i in 1:length(GOAnots1)){
+for (j in 1:length(GOAnots1[[i]])){
+  GOAnot <- GOAnots1[[i]][[j]][[1]]
+ cat(top1[i],geneSymbol1[i],GOAnot,substr(Term(GOAnot),1,30), "\n")}}
+```
+
+
+```{r}
+require(GOstats)
+require(ath1121501.db)
+
+ # Seleccionamos la "topTable"
+topTab <- tT
+ # Definimos el universo de genes: todos los que se han incluido en el análisis
+ # EL programa trabaja con identificadores "entrez" y no admite duplicados
+
+ entrezUniverse = unique(getEG(as.character(genesTable$probe_id), "ath1121501.db"))
+ # Escogemos los grupos de sondas a incluir en el análisis
+ # Este análisis trabaja bien con varios centenares de genes
+ # por lo que es habitual basarse en p-valores sin ajustar para incluirlos
+
+ whichGenes<-tT["adj.P.Val"]<0.001
+geneIds <- unique(getEG(as.character(topTab$[whichGenes]),"ath1121501.db"))
+ # Creamos los "hiperparámetros" en que se basa el análisis
+ GOparams = new("GOHyperGParams",
++ geneIds=geneIds, universeGeneIds=entrezUniverse,
++ annotation="ath1121501.db", ontology="BP",
++ pvalueCutoff=0.001, conditional=FALSE,
++ testDirection="over")
+ KEGGparams = new("KEGGHyperGParams",
++ geneIds=geneIds, universeGeneIds=entrezUniverse,
++ annotation="ath1121501.db",
++ pvalueCutoff=0.01, testDirection="over")
+ # Ejecutamos los análisis
+
+ GOhyper = hyperGTest(GOparams)
+ KEGGhyper = hyperGTest(KEGGparams)
+ # Creamos un informe html con los resultados
+ comparison = "topTab"
+ GOfilename =file.path(resultsDir,
++ paste("GOResults.",comparison,".html", sep=""))
+ KEGGfilename =file.path(resultsDir,
++ paste("KEGGResults.",comparison,".html", sep=""))
+ htmlReport(GOhyper, file = GOfilename, summary.args=list("htmlLinks"=TRUE))
+ htmlReport(KEGGhyper, file = KEGGfilename, summary.args=list("htmlLinks"=TRUE))
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
